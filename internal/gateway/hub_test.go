@@ -1045,3 +1045,26 @@ func TestHubModelsHoldOnEveryAPI(t *testing.T) {
 		t.Fatalf("the member's vendor was asked %d times, another's %d", mine.Load(), others.Load())
 	}
 }
+
+// Codex's own model list is a list like /v1/models: a member's holds their
+// groups' models alone, and nobody's is read without a key.
+func TestHubCodexCatalogIsTheMembers(t *testing.T) {
+	h := newHub(t)
+	vendor(t, "plan", "m1", answers(30, 5))
+	vendor(t, "other", "m2", answers(7, 3))
+	lab := h.group("lab", "plan/m1")
+	_, key := h.member(hub.MemberIn{Name: "alice", Groups: []string{lab}})
+	var out string
+	if status := h.get(key, CodexCatalogPath, &out); status != 200 {
+		t.Fatalf("the member's Codex catalog: %d %s", status, out)
+	}
+	if strings.Contains(out, "m2") {
+		t.Errorf("the catalog names a model the member's groups don't give: %s", out)
+	}
+	if !strings.Contains(out, "m1") {
+		t.Errorf("the catalog leaves out the member's own model: %s", out)
+	}
+	if status := h.get("", CodexCatalogPath, nil); status != 401 {
+		t.Errorf("the catalog with no key: %d, want 401", status)
+	}
+}

@@ -97,6 +97,7 @@ func All() []*Agent {
 		hermes(home),
 		morph(home),
 		kimi(home),
+		qwen(home),
 		muse(cfg),
 		empryo(home),
 		ante(home),
@@ -115,7 +116,7 @@ func All() []*Agent {
 		atomcode(home),
 		alma(),
 		cindy(),
-	}, wslAgents()...)
+	}, append(ompProfiles(home), wslAgents()...)...)
 }
 
 // ---- accessors -------------------------------------------------------------

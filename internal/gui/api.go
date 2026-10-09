@@ -204,6 +204,9 @@ type agentJSON struct {
 	// Joined: connected with its own models still in its list (Codex
 	// signed in with ChatGPT, agent.Agent.Join)
 	Joined bool `json:"joined,omitempty"`
+	// Failover: not connected, yet its requests go through magpie for
+	// account failover alone (agent.Agent.FailingOver, #1385)
+	Failover bool `json:"failover,omitempty"`
 	// CLIMissing: its settings are here, its CLI isn't (#843), which
 	// the row says, and Install another agent offers it again
 	CLIMissing bool               `json:"cliMissing,omitempty"`
@@ -342,12 +345,17 @@ type settingsJSON struct {
 	// that can be named
 	VisionAuto   string     `json:"visionAuto,omitempty"`
 	VisionModels []modelRef `json:"visionModels"`
+	// the Vision the user picked when magpie can't find it any more:
+	// VisionAuto describes in its place, and the row says so
+	VisionMissing string `json:"visionMissing,omitempty"`
 	// the models Codex's thread titles may be sent to (CodexTitles, #705)
 	TitleModels []modelRef `json:"titleModels"`
 	// the model magpie's generate_image tool draws with when ImageGen
 	// names none, and those that can be named
-	ImageGenAuto   string     `json:"imageGenAuto,omitempty"`
-	ImageGenModels []modelRef `json:"imageGenModels"`
+	ImageGenAuto string `json:"imageGenAuto,omitempty"`
+	// the ImageGen the user picked when magpie can't find it any more
+	ImageGenMissing string     `json:"imageGenMissing,omitempty"`
+	ImageGenModels  []modelRef `json:"imageGenModels"`
 	// the web search APIs a model's search goes to when no provider can
 	// search (#419), their keys masked; the ones that can be added; and
 	// the provider that searches first, if one does
@@ -513,7 +521,7 @@ func settingsState() settingsJSON {
 	s.MiniMax, s.MiniMaxCheckins = provider.HasMiniMax(), provider.MiniMaxCheckins()
 	s.Qoder, s.QoderCheckins = provider.HasQoder(), provider.QoderCheckins()
 	s.CheckinPlugins = provider.PluginCheckins()
-	s.VisionAuto, s.VisionModels = gateway.AutoVision(), []modelRef{}
+	s.VisionAuto, s.VisionModels, s.VisionMissing = gateway.AutoVision(), []modelRef{}, gateway.VisionMissing()
 	for _, e := range provider.Served() {
 		if e.Images && (e.ImageInput == nil || *e.ImageInput) && (e.Group != "" || e.Provider.Ready()) {
 			m := modelRef{ID: e.ID, Name: e.Name, Provider: e.Provider.ID, PName: e.Provider.Name, Icon: e.Provider.Icon}
@@ -534,7 +542,7 @@ func settingsState() settingsJSON {
 		}
 	}
 	searchState(&s)
-	s.ImageGenAuto, s.ImageGenModels = gateway.AutoDrawer(), []modelRef{}
+	s.ImageGenAuto, s.ImageGenModels, s.ImageGenMissing = gateway.AutoDrawer(), []modelRef{}, gateway.DrawerMissing()
 	for _, p := range provider.All() {
 		if !p.On() || p.DecideOnly() {
 			continue
@@ -998,10 +1006,11 @@ func Handler(w Windows, gw *gateway.Server) http.Handler {
 		// its own. The per-model maps are carried whole rather than named one
 		// by one, so a map added later is not silently dropped here.
 		//
-		// HiddenModels and OrderedModels are the other way round — keyed by
-		// agent, not by "<provider>/<model>" — so they are not among them,
-		// and belong to the Agents page.
+		// HiddenModels, PickedModels and OrderedModels are the other way
+		// round — keyed by agent, not by "<provider>/<model>" — so they are
+		// not among them, and belong to the Agents page.
 		in.Visible, in.HiddenModels, in.OrderedModels = cur.Visible, cur.HiddenModels, cur.OrderedModels
+		in.PickedModels = cur.PickedModels     // "only models I pick" (#1337)
 		in.FastPicks = cur.FastPicks           // switched in the agents' pickers (#954)
 		in.AgentEfforts = cur.AgentEfforts     // picked in an agent's row (#1003)
 		in.PluginCheckins = cur.PluginCheckins // set on its own (plugin-checkin below)
@@ -1732,6 +1741,7 @@ func state() stateJSON {
 			aj.Joined = a.Joined != nil && a.Joined()
 		} else {
 			aj.Source = a.Source()
+			aj.Failover = a.FailingOver != nil && a.FailingOver()
 		}
 		if a.Import != nil {
 			aj.Import, aj.Added = a.Import(), a.Added != nil && a.Added()

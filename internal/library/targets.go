@@ -225,10 +225,13 @@ func targetOf(a *agent.Agent) *Target {
 	case "alma":
 		// Alma reads personal skills from ~/.config/alma/skills, on every
 		// system (its home, not its data folder), and Claude Code's, Codex's
-		// and ~/.agents/skills besides (its skills service, #824); it has
-		// no user-wide instructions file or MCP file of the kind magpie
-		// writes, its prompts being its settings' own
+		// and ~/.agents/skills besides (its skills service, #824). Its MCP
+		// servers are ~/.config/alma/mcp.json's mcpServers, read as Alma
+		// starts and when its MCP settings refresh (0.4.164's
+		// out/main/index.js, #1292). It has no user-wide instructions file,
+		// its prompts being its settings' own
 		t.Skills = filepath.Join(h, ".config", "alma", "skills")
+		t.MCP = &mcpFile{Path: filepath.Join(h, ".config", "alma", "mcp.json"), Format: fmtAlma}
 		t.SkillsAlso = []string{"claude", "codex"}
 	case "cindy":
 		// Cindy keeps its user-wide skills in ~/.agents/skills
@@ -378,7 +381,43 @@ func wslTargetOf(a *agent.Agent) *Target {
 		t.MCP = &mcpFile{Path: filepath.Join(d, "mcp.json"), Format: fmtPiNative, WSL: true, Distro: a.WSL, Home: linuxHome(h)}
 		t.Skills = filepath.Join(d, "skills")
 	default:
+		return wslOwnFolder(a)
+	}
+	return t
+}
+
+// ownFolder are the agents that keep all the library gives them in their
+// own folder (a.Dir, or beside a.Path), read from no variable of this
+// machine's and from nothing under its home: one magpie found in a distro
+// has that folder at the distro's home already, so its target there is
+// the one targetOf makes on this machine, given copies (#1323).
+var ownFolder = map[string]bool{
+	"hermes": true, "omp": true, "opencode": true, "mimocode": true, "droid": true,
+	"grok": true, "commandcode": true, "atomcode": true, "qoder": true, "qoder-cn": true,
+	"minimax-code": true, "fx": true, "dsh": true,
+}
+
+// wslOwnFolder is the target of a, an agent in a running WSL distro that
+// keeps everything in its own folder; nil for any other.
+func wslOwnFolder(a *agent.Agent) *Target {
+	id, at, _ := strings.Cut(a.ID, "@")
+	if !ownFolder[id] {
 		return nil
+	}
+	local := *a
+	local.ID, local.WSL = id, ""
+	t := targetOf(&local)
+	if t == nil {
+		return nil
+	}
+	t.Agent, t.Copy = a, true
+	if t.MCP != nil {
+		t.MCP.WSL, t.MCP.Distro, t.MCP.Home = true, a.WSL, linuxHome(a.Home)
+	}
+	// the skills it reads besides its own are those agents' in the same
+	// distro, not this machine's
+	for i, o := range t.SkillsAlso {
+		t.SkillsAlso[i] = o + "@" + at
 	}
 	return t
 }

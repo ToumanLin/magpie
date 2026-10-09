@@ -18,13 +18,16 @@ type Limit struct {
 	Tokens     int64   `json:"tokens,omitempty"`
 	Cost       float64 `json:"cost,omitempty"`
 	CacheReads bool    `json:"cacheReads,omitempty"`
+	// Charge caps what a member's plan charges for the window, in the
+	// plan's own prices (package relay): only a member's limit has one.
+	Charge float64 `json:"charge,omitempty"`
 }
 
 // Periods are the windows a limit can be set for.
 var Periods = []string{"day", "week", "month"}
 
 // Limited: l caps something.
-func (l *Limit) Limited() bool { return l != nil && (l.Tokens > 0 || l.Cost > 0) }
+func (l *Limit) Limited() bool { return l != nil && (l.Tokens > 0 || l.Cost > 0 || l.Charge > 0) }
 
 // Valid is l as it is kept: nil for no limit, an error for one that
 // can't be.
@@ -32,7 +35,7 @@ func (l *Limit) Valid() (*Limit, error) {
 	if l == nil {
 		return nil, nil
 	}
-	if l.Tokens < 0 || l.Cost < 0 || math.IsNaN(l.Cost) || math.IsInf(l.Cost, 0) {
+	if l.Tokens < 0 || l.Cost < 0 || math.IsNaN(l.Cost) || math.IsInf(l.Cost, 0) || l.Charge < 0 || math.IsNaN(l.Charge) || math.IsInf(l.Charge, 0) {
 		return nil, errors.New("A limit can't be negative")
 	}
 	if !l.Limited() {
@@ -48,6 +51,7 @@ func (l *Limit) Valid() (*Limit, error) {
 		return nil, errors.New("A limit's period is day, week or month")
 	}
 	v.Cost = math.Round(v.Cost*1e4) / 1e4
+	v.Charge = math.Round(v.Charge*1e4) / 1e4
 	return &v, nil
 }
 

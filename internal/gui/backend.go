@@ -10,6 +10,7 @@ import (
 	"github.com/yetone/magpie/internal/agent"
 	"github.com/yetone/magpie/internal/catalog"
 	"github.com/yetone/magpie/internal/gateway"
+	"github.com/yetone/magpie/internal/mode"
 	"github.com/yetone/magpie/internal/provider"
 	"github.com/yetone/magpie/internal/update"
 )
@@ -55,8 +56,11 @@ func startBackend() (gw *gateway.Server) {
 		// first time so the picker never shows a stale snapshot.
 		provider.FetchNew(20 * time.Second)
 		// lists an older magpie wrote into agents' files, without what
-		// it has learnt since (context windows, providers added)
-		agent.SyncCatalog()
+		// it has learnt since (context windows, providers added); Pie
+		// writes into no agent's files
+		if !mode.IsServer() {
+			agent.SyncCatalog()
+		}
 		// and fetched again each day it stays open, for new models' prices
 		catalog.KeepFresh()
 	}()

@@ -37,6 +37,7 @@ import (
 	"github.com/yetone/magpie/internal/fx"
 	"github.com/yetone/magpie/internal/gateway"
 	"github.com/yetone/magpie/internal/library"
+	"github.com/yetone/magpie/internal/mode"
 	"github.com/yetone/magpie/internal/netproxy"
 	"github.com/yetone/magpie/internal/profile"
 	"github.com/yetone/magpie/internal/provider"
@@ -655,6 +656,11 @@ func Handler(w Windows, gw *gateway.Server) http.Handler {
 		// and the text size, which the Mac's header measures against the
 		// traffic lights
 		boot := map[string]any{"lang": s.Lang, "theme": s.Theme, "textSize": s.TextSize, "web": isWeb(w)}
+		// and which of AI Relay's programs this is (package mode), so the
+		// other's pages never show: "client", "server", or none for magpie
+		if m := mode.Current(); m != "" {
+			boot["relay"] = m
+		}
 		if !isWeb(w) {
 			boot["uiFont"], boot["codeFont"] = s.UIFont, s.CodeFont
 		}
@@ -956,6 +962,7 @@ func Handler(w Windows, gw *gateway.Server) http.Handler {
 	cliBehindRoutes(mux)
 	gatewayFixRoutes(mux)
 	gatewayModeRoutes(mux)
+	relayRoutes(mux)
 	mux.HandleFunc("GET /api/settings", func(rw http.ResponseWriter, r *http.Request) {
 		access.MigrateLegacyLANKeyBestEffort()
 		writeJSON(rw, settingsState())
@@ -1666,7 +1673,7 @@ func Handler(w Windows, gw *gateway.Server) http.Handler {
 	})
 	agentModelsAPI(mux)
 	devListen(mux)
-	return held(mux)
+	return modeGuard(held(mux))
 }
 
 // held has a page's reads share one build of the catalog, which every row
@@ -1706,7 +1713,11 @@ func state() stateJSON {
 	for _, a := range agent.Clients() {
 		s.Clients = append(s.Clients, clientJSON{ID: a.ID, Name: a.Name, Icon: a.Icon})
 	}
-	for _, a := range agent.Detected() {
+	detected := agent.Detected()
+	if mode.IsServer() {
+		detected = nil // Pie reads no agent's files on the computer it runs on
+	}
+	for _, a := range detected {
 		if a.Follow != nil {
 			_ = a.Follow()
 		}

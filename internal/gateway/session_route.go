@@ -90,6 +90,9 @@ func sessionRouteOf(r Route) SessionRoute {
 // seq. Like the quotas, it answers this machine, and another only with the
 // shared gateway's key.
 func (s *Server) sessionRoute(w http.ResponseWriter, r *http.Request) {
+	if memberOnly(w, r) { // a route names the hub's accounts, and a session id is no proof it is the caller's
+		return
+	}
 	if !local(r) && !sharedWith(r) {
 		writeError(w, provider.Chat, http.StatusForbidden, "magpie's routes are told to another machine only when magpie is shared on the local network (Settings → Share on local network) and the request carries its API key (Authorization: Bearer <key> or x-api-key: <key>)")
 		return

@@ -23,6 +23,7 @@ import (
 
 	"github.com/yetone/magpie/internal/appdir"
 	"github.com/yetone/magpie/internal/catalog"
+	"github.com/yetone/magpie/internal/mode"
 	"github.com/yetone/magpie/internal/settings"
 	"github.com/yetone/magpie/internal/steady"
 )
@@ -421,6 +422,9 @@ func allProviders() []Provider {
 	var out []Provider
 	for _, p := range stored {
 		p = normalize(p)
+		if mode.IsClient() && !p.IsRemoteMagpie() {
+			continue // Mag serves a hub's models alone, whatever its file was given
+		}
 		if p.Chat == "" && p.Responses == "" && p.Anthropic == "" && p.Decide == "" {
 			picks[p.ID] = p
 			continue
@@ -520,6 +524,9 @@ func Slug(name string) string {
 func Save(p Provider) error {
 	p = normalize(p)
 	p.IconURL = "" // import-only: never stored
+	if mode.IsClient() && !p.IsRemoteMagpie() {
+		return errors.New("Mag keeps no provider or account of its own: every model it serves is the hub's. Connect to a hub instead")
+	}
 	if p.ID == "" {
 		p.ID = Slug(p.Name)
 	}

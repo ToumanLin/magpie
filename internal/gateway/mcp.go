@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/yetone/magpie/internal/access"
 	"github.com/yetone/magpie/internal/mcpauth"
 	"github.com/yetone/magpie/internal/netproxy"
 )
@@ -42,6 +43,10 @@ var mcpHop = map[string]bool{
 // when it runs out or the server says it has.
 func (s *Server) mcpProxy(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
+	if access.Caller(r.Context()).Member != "" {
+		http.Error(w, "the hub's MCP sign-ins are its own: a member's device is not lent them", http.StatusForbidden)
+		return
+	}
 	if !local(r) && !sharedWith(r) {
 		http.Error(w, "magpie lends its MCP sign-ins to another machine only when magpie is shared on the local network and the request carries its API key", http.StatusForbidden)
 		return

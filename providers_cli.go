@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"net"
 	"os"
 	"slices"
 	"strconv"
@@ -16,7 +17,9 @@ import (
 	"github.com/yetone/magpie/internal/agent"
 	"github.com/yetone/magpie/internal/catalog"
 	"github.com/yetone/magpie/internal/gateway"
+	"github.com/yetone/magpie/internal/mode"
 	"github.com/yetone/magpie/internal/provider"
+	"github.com/yetone/magpie/internal/relay"
 	"github.com/yetone/magpie/internal/settings"
 	"github.com/yetone/magpie/internal/stats"
 )
@@ -974,7 +977,21 @@ func advertisedURL() string {
 }
 
 // serve: `magpie serve` — the gateway alone, in the foreground.
-func serve() error {
+func serve(args []string) error {
+	for i := 0; i < len(args); i++ {
+		switch a := args[i]; {
+		case a == "--listen" && i+1 < len(args):
+			i++
+			os.Setenv("MAGPIE_ADDR", args[i])
+		case strings.HasPrefix(a, "--listen="):
+			os.Setenv("MAGPIE_ADDR", strings.TrimPrefix(a, "--listen="))
+		default:
+			return fmt.Errorf("%s serve: unknown %q · %s serve [--listen host:port]", mode.App(), a, mode.App())
+		}
+	}
+	if mode.IsServer() {
+		return serveHub()
+	}
 	s := gateway.New()
 	go stats.Run(version, "serve")
 	go catalog.KeepFresh() // new models' prices, in a gateway left running
@@ -1389,4 +1406,34 @@ func printPicksChange(before, after provider.Provider, args []string) {
 			fmt.Println(" ", amber.Render("!"), after.ID+"/"+id, muted.Render("isn't in "+after.Name+"'s list; exposed as given"))
 		}
 	}
+}
+
+// serveHub is `pie serve`: the hub alone, in the foreground.
+func serveHub() error {
+	s := gateway.New()
+	go catalog.KeepFresh()
+	public := advertisedURL()
+	fmt.Println(green.Render("●"), "AI Relay hub on", bold.Render(gateway.Addr()))
+	fmt.Println(muted.Render("  members  "), public+"/relay/", muted.Render("· sign in, device keys, usage"))
+	fmt.Println(muted.Render("  OpenAI   "), public+"/v1", muted.Render("· Anthropic"), public)
+	fmt.Println(muted.Render("  every request needs a member's device key, or a key of the hub's own (pie gateway-key add <name>)"))
+	if h, _, err := net.SplitHostPort(gateway.Addr()); err == nil {
+		if ip := net.ParseIP(h); h == "localhost" || ip != nil && ip.IsLoopback() {
+			fmt.Println(amber.Render("!"), "listening on this computer only: pie serve --listen 0.0.0.0:"+gateway.Port(), "(or a VPN interface's address) lets members' computers reach it")
+		} else {
+			fmt.Println(amber.Render("!"), "the hub speaks plain HTTP: put it behind a VPN or an HTTPS reverse proxy before it leaves a network you trust, and set MAGPIE_PUBLIC_URL to the address members use")
+		}
+	}
+	if err := provider.FileError(); err != nil {
+		fmt.Println(amber.Render("!"), err)
+	}
+	if n := len(provider.Catalog()); n == 0 {
+		fmt.Println(amber.Render("!"), "no models yet · pie provider add deepseek sk-…, then pie relay group add lab models=…")
+	} else {
+		fmt.Printf("  %d models · %s\n", n, muted.Render("pie models"))
+	}
+	if v, err := relay.Snapshot(); err == nil {
+		fmt.Printf("  %d members · %d groups · %d plans %s\n", len(v.Members), len(v.Groups), len(v.Plans), muted.Render("· pie relay"))
+	}
+	return s.ListenAndServe(context.Background())
 }

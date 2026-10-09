@@ -33,6 +33,7 @@ import (
 
 	"github.com/yetone/magpie/internal/appdir"
 	"github.com/yetone/magpie/internal/catalog"
+	"github.com/yetone/magpie/internal/mode"
 	"github.com/yetone/magpie/internal/plugin"
 	"github.com/yetone/magpie/internal/proc"
 )
@@ -686,8 +687,13 @@ func refreshFailed(status int, agent, msg string) error {
 	return fmt.Errorf("%s token refresh failed (HTTP %d)", agent, status)
 }
 
-// Accounts lists the signed-in agents as providers.
+// Accounts lists the signed-in agents as providers. Mag, the member's
+// client, has none: it reads no agent's sign-in on the member's computer,
+// and every model it serves is the hub's.
 func Accounts() []Provider {
+	if mode.IsClient() {
+		return nil
+	}
 	rememberLogins(false)
 	home, _ := os.UserHomeDir()
 	cfg := appdir.Getenv("XDG_CONFIG_HOME")

@@ -28,6 +28,7 @@ import (
 	"github.com/yetone/magpie/internal/edit"
 	"github.com/yetone/magpie/internal/filememo"
 	"github.com/yetone/magpie/internal/fonts"
+	"github.com/yetone/magpie/internal/mode"
 	"github.com/yetone/magpie/internal/redact"
 	"github.com/yetone/magpie/internal/steady"
 )
@@ -825,6 +826,20 @@ func CheckProxy(p string) error {
 // another.
 const DefaultPort = 3425
 
+// ClientPort is Mag's local gateway's port unless Settings or MAGPIE_ADDR
+// say another: its own, not magpie's, so a magpie already on the member's
+// computer (or a Pie beside it) is not taken for Mag's gateway, which
+// alone knows the hub's models.
+const ClientPort = 3525
+
+// PortDefault is the default port of the program this is.
+func PortDefault() int {
+	if mode.IsClient() {
+		return ClientPort
+	}
+	return DefaultPort
+}
+
 // CheckPort says what is wrong with a port for the gateway: one from 1024
 // to 65535 (below that a system wants an administrator to listen on it),
 // or 0 for the default.
@@ -851,7 +866,7 @@ func GatewayAddr() string {
 func SavedAddr() string {
 	p := Load().Port
 	if p == 0 || CheckPort(p) != nil {
-		p = DefaultPort
+		p = PortDefault()
 	}
 	return fmt.Sprintf("127.0.0.1:%d", p)
 }

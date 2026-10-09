@@ -56,6 +56,8 @@ func (c *rowChunk) pack() *rowChunk {
 		put(math.Float64bits(p.Cost))
 		put(uint64(p.Status))
 		put(uint64(p.Flags))
+		put(uint64(p.Est))
+		put(math.Float64bits(p.Charge))
 	}
 	var b bytes.Buffer
 	w := rowCompressors.Get().(*flate.Writer)
@@ -133,6 +135,7 @@ func (c *rowChunk) unpack() *rowChunk {
 		p.RouteID = int64(take())
 		p.Sent = int64(take())
 		p.Cost, p.Status, p.Flags = math.Float64frombits(take()), int32(take()), uint8(take())
+		p.Est, p.Charge = int64(take()), math.Float64frombits(take())
 	}
 	if !valid || len(data) != 0 {
 		return nil

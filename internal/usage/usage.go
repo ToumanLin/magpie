@@ -38,6 +38,26 @@ type Record struct {
 	ProviderAccount string `json:"providerAccount,omitempty"`
 	CallerKeyID     string `json:"callerKeyId,omitempty"`
 	CallerKeyName   string `json:"callerKeyName,omitempty"`
+	// Member is the AI Relay member whose device the caller key is, by its
+	// id, and MemberName its name when the call was made (package relay);
+	// "" for a call no member made. The member's own page and the
+	// administrator's totals are both summed from these records.
+	Member     string `json:"member,omitempty"`
+	MemberName string `json:"memberName,omitempty"`
+	// Plan is the plan the member was on, and Charge what it charges for
+	// the call, in US dollars at the plan's own prices: 0 on a plan that
+	// charges by its period, not by the call.
+	Plan   string  `json:"plan,omitempty"`
+	Charge float64 `json:"charge,omitempty"`
+	// Settle is how the call's reservation against the member's limit
+	// ended: "settled" with the usage the vendor reported, "estimated"
+	// when a call that was answered reported none (UsageUnknown: Est, the
+	// tokens reserved for it, are counted in its place), "released" when it
+	// failed with nothing used, and "interrupted" for one the hub was
+	// stopped in the middle of, counted at Est too.
+	Settle       string `json:"settle,omitempty"`
+	UsageUnknown bool   `json:"usage_unknown,omitempty"`
+	Est          int64  `json:"est,omitempty"`
 	// SessionProvider is the provider ID recorded by the agent. SessionAccount
 	// identifies the session's creator, not the account used for an API request.
 	// Neither field establishes an upstream route from today's configuration.

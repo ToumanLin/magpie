@@ -122,6 +122,16 @@ type Key struct {
 	// "<provider>/<account>": a signed-in account by its stable id, a
 	// key by its fingerprint; none for every account, as keys always did.
 	Accounts []string `json:"accounts,omitempty"`
+	// Member is the AI Relay member whose device the key is (package
+	// relay): what it may use is then the member's, resolved on each
+	// request (MemberOf), never the key's own lists. Such a key is kept by
+	// its SHA-256 alone (Hash), with its last characters (Tail) to show: the
+	// hub can't give it out again, and a copy of the file gives no key.
+	Member string `json:"member,omitempty"`
+	Hash   string `json:"hash,omitempty"`
+	Tail   string `json:"tail,omitempty"`
+	// Created and Used are when a member's device was made and last let in.
+	Created int64 `json:"created,omitempty"`
 }
 
 // Identity is the gateway key a request came with, its budget, the
@@ -131,7 +141,32 @@ type Identity struct {
 	Limit          *Limit
 	Models         []string
 	Accounts       []string
+	// Member is the AI Relay member the key is a device of, "" for a key
+	// of the gateway's own; MemberName its name. MemberLimit is the
+	// member's own budget, counted over all its devices, and Concurrency
+	// and Queue how many of its requests run at once and how many wait
+	// (0: no cap, no queue). Plan is the plan its use is charged by.
+	Member, MemberName string
+	MemberLimit        *Limit
+	Concurrency, Queue int
+	Plan               string
+	// ChargeRate is what the member's plan charges for a token of input,
+	// in US dollars: what a request in flight is reserved at against a
+	// limit on the plan's charge.
+	ChargeRate float64
 }
+
+// MemberOf resolves a member's device key to who it is now: the member's
+// models, limit and concurrency as the hub has them at this moment, so a
+// group's change or a member turned off holds on the next request. ok is
+// false for a member that is gone or off, and the key is then refused.
+// Package relay sets it; with none set a member's key is refused.
+var MemberOf func(k Key) (Identity, bool)
+
+// NoModels is the one pattern of a member no group gives any model: it
+// matches none, where an empty list would let the key use every model.
+const NoModels = "\x00relay/none"
+
 type contextKey struct{}
 
 func WithIdentity(ctx context.Context, who Identity) context.Context {
@@ -180,6 +215,9 @@ func List() ([]Key, error) {
 			}
 		}
 		k.Secret = ""
+		if k.Hash != "" {
+			k.Masked = Prefix + "…" + k.Tail
+		}
 	}
 	return keys, nil
 }
@@ -376,13 +414,34 @@ func Authenticate(secret string) (Identity, bool) {
 	if err != nil || secret == "" {
 		return Identity{}, false
 	}
+	sum := HashOf(secret)
 	for _, k := range keys {
-		if subtle.ConstantTimeCompare([]byte(secret), []byte(k.Secret)) == 1 {
-			if k.Off {
+		if k.Hash != "" {
+			if subtle.ConstantTimeCompare([]byte(sum), []byte(k.Hash)) != 1 {
+				continue
+			}
+		} else if k.Secret == "" || subtle.ConstantTimeCompare([]byte(secret), []byte(k.Secret)) != 1 {
+			continue
+		}
+		if k.Off {
+			return Identity{}, false
+		}
+		if k.Member != "" {
+			// a member's device: what it may do is the member's, asked anew
+			if MemberOf == nil {
 				return Identity{}, false
 			}
-			return Identity{KeyID: k.ID, KeyName: k.Name, Limit: k.Limit, Models: k.Models, Accounts: k.Accounts}, true
+			who, ok := MemberOf(k)
+			if !ok {
+				return Identity{}, false
+			}
+			who.KeyID, who.KeyName = k.ID, k.Name
+			if len(who.Models) == 0 {
+				who.Models = []string{NoModels}
+			}
+			return who, true
 		}
+		return Identity{KeyID: k.ID, KeyName: k.Name, Limit: k.Limit, Models: k.Models, Accounts: k.Accounts}, true
 	}
 	s := settings.Load()
 	// A read-only config directory may prevent the first store write. Never
@@ -503,4 +562,88 @@ func save(keys []Key) error {
 		return err
 	}
 	return edit.WriteAtomic(Path(), append(b, '\n'))
+}
+
+// HashOf is how a member's device key is kept: its SHA-256, in hex.
+func HashOf(secret string) string {
+	sum := sha256.Sum256([]byte(secret))
+	return hex.EncodeToString(sum[:])
+}
+
+// AddDevice makes a key that is a member's device and returns its id and
+// the key itself, which is shown this once: only its hash is kept.
+func AddDevice(member, name string, created int64) (id, secret string, err error) {
+	name = strings.TrimSpace(name)
+	if member == "" || name == "" || utf8.RuneCountInString(name) > 120 {
+		return "", "", errors.New("Use a name between 1 and 120 characters")
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	keys, err := load()
+	if err != nil {
+		return "", "", err
+	}
+	if id, err = random(12); err != nil {
+		return "", "", err
+	}
+	token, err := random(24)
+	if err != nil {
+		return "", "", err
+	}
+	secret = Prefix + token
+	keys = append(keys, Key{ID: id, Name: name, Member: member, Hash: HashOf(secret), Tail: secret[len(secret)-4:], Created: created})
+	if err := save(keys); err != nil {
+		return "", "", err
+	}
+	return id, secret, nil
+}
+
+// Devices are a member's device keys, every member's for "", without what
+// would let anyone use one.
+func Devices(member string) ([]Key, error) {
+	keys, err := List()
+	if err != nil {
+		return nil, err
+	}
+	out := []Key{}
+	for _, k := range keys {
+		if k.Member != "" && (member == "" || k.Member == member) {
+			k.Hash = ""
+			out = append(out, k)
+		}
+	}
+	return out, nil
+}
+
+// RemoveDevice takes a member's device away for good; member "" for any
+// member's (the administrator's), else only that member's own. The next
+// request with its key is refused.
+func RemoveDevice(member, id string) error {
+	mu.Lock()
+	defer mu.Unlock()
+	keys, err := load()
+	if err != nil {
+		return err
+	}
+	i := slices.IndexFunc(keys, func(k Key) bool { return k.ID == id && k.Member != "" && (member == "" || k.Member == member) })
+	if i < 0 {
+		return errors.New("Device not found")
+	}
+	return save(slices.Delete(keys, i, i+1))
+}
+
+// RemoveDevices takes away every device of a member, when the member is
+// removed.
+func RemoveDevices(member string) error {
+	mu.Lock()
+	defer mu.Unlock()
+	keys, err := load()
+	if err != nil {
+		return err
+	}
+	kept := slices.DeleteFunc(slices.Clone(keys), func(k Key) bool { return member != "" && k.Member == member })
+	if len(kept) == len(keys) {
+		return nil
+	}
+	return save(kept)
 }

@@ -13,6 +13,7 @@ import (
 	"github.com/yetone/magpie/internal/backup"
 	"github.com/yetone/magpie/internal/davsync"
 	"github.com/yetone/magpie/internal/edit"
+	"github.com/yetone/magpie/internal/mode"
 	"github.com/yetone/magpie/internal/settings"
 )
 
@@ -33,6 +34,9 @@ func backupRoutes(mux *http.ServeMux, w Windows) {
 		if err != nil {
 			fail(rw, err)
 			return
+		}
+		if mode.IsClient() {
+			b.ForClient() // the hub connection, agents, settings and library: no upstream key
 		}
 		if in.Library != nil && !*in.Library {
 			b.Library = nil
@@ -78,6 +82,9 @@ func backupRoutes(mux *http.ServeMux, w Windows) {
 		if err != nil {
 			fail(rw, err)
 			return
+		}
+		if mode.IsClient() {
+			b.ForClient() // whatever made the file, Mag takes in no upstream key
 		}
 		parts := backup.All
 		parts.Agents = in.Agents

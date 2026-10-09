@@ -1,0 +1,411 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>AI Relay</title>
+<style>
+:root {
+  --bg: #f6f6f4; --panel: #ffffff; --line: #e3e3de; --text: #1c1d1f; --muted: #6b6f76;
+  --accent: #2f6fed; --accent-text: #ffffff; --ok: #0f9d58; --warn: #b26a00; --bad: #c62828;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root { --bg: #17181b; --panel: #1f2125; --line: #2e3137; --text: #e8e9ec; --muted: #9096a0;
+    --accent: #6d9bff; --accent-text: #10131a; --ok: #7ee2a8; --warn: #f0b860; --bad: #ff8a80; }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.5 system-ui, -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif; }
+main { max-width: 920px; margin: 0 auto; padding: 24px 16px 64px; }
+header { display: flex; align-items: center; gap: 12px; margin-bottom: 20px; flex-wrap: wrap; }
+h1 { font-size: 18px; margin: 0; font-weight: 600; }
+h2 { font-size: 14px; margin: 0 0 10px; font-weight: 600; }
+.spacer { flex: 1; }
+.muted { color: var(--muted); }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 16px; margin-bottom: 14px; }
+.row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
+.stat { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; }
+.stat b { display: block; font-size: 18px; font-weight: 600; font-variant-numeric: tabular-nums; }
+label { display: block; margin: 10px 0 4px; color: var(--muted); font-size: 12px; }
+input { width: 100%; padding: 8px 10px; border: 1px solid var(--line); border-radius: 7px; background: var(--bg); color: var(--text); font: inherit; }
+input:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+button { padding: 7px 12px; border: 1px solid var(--line); border-radius: 7px; background: var(--panel); color: var(--text); font: inherit; cursor: pointer; }
+button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
+button.danger { color: var(--bad); }
+button[disabled] { opacity: .5; cursor: default; }
+button.on { border-color: var(--accent); color: var(--accent); }
+table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+th { color: var(--muted); font-weight: 500; font-size: 12px; }
+td.num, th.num { text-align: right; }
+.scroll { overflow-x: auto; }
+code, .mono { font-family: var(--mono); font-size: 12.5px; }
+.key { display: block; padding: 10px; border: 1px dashed var(--accent); border-radius: 7px; word-break: break-all; white-space: normal; margin: 8px 0; }
+.chip { display: inline-block; padding: 1px 8px; border: 1px solid var(--line); border-radius: 999px; margin: 0 6px 6px 0; }
+.bar { height: 6px; border-radius: 3px; background: var(--line); overflow: hidden; margin-top: 6px; }
+.bar i { display: block; height: 100%; background: var(--accent); }
+.msg { margin-top: 10px; min-height: 1.4em; }
+.err { color: var(--bad); }
+.ok { color: var(--ok); }
+.dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 6px; background: var(--muted); }
+.dot.ok { background: var(--ok); } .dot.bad { background: var(--bad); } .dot.warn { background: var(--warn); }
+[hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>AI Relay</h1>
+    <span class="muted" id="who"></span>
+    <span class="spacer"></span>
+    <button id="lang" type="button"></button>
+    <button id="logout" type="button" hidden></button>
+  </header>
+
+  <section id="signin" hidden>
+    <div class="card" id="redeemCard" hidden>
+      <h2 data-t="invite.title"></h2>
+      <p class="muted" data-t="invite.note"></p>
+      <label for="code" data-t="invite.code"></label>
+      <input id="code" autocomplete="off" spellcheck="false">
+      <label for="newpass" data-t="invite.password"></label>
+      <input id="newpass" type="password" autocomplete="new-password">
+      <label for="newpass2" data-t="invite.password2"></label>
+      <input id="newpass2" type="password" autocomplete="new-password">
+      <div class="row" style="margin-top:12px">
+        <button class="primary" id="redeem" type="button" data-t="invite.go"></button>
+        <button id="toLogin" type="button" data-t="invite.have"></button>
+      </div>
+      <div class="msg err" id="redeemMsg" role="alert"></div>
+    </div>
+    <div class="card" id="loginCard">
+      <h2 data-t="login.title"></h2>
+      <label for="name" data-t="login.name"></label>
+      <input id="name" autocomplete="username" spellcheck="false" autocapitalize="none">
+      <label for="pass" data-t="login.password"></label>
+      <input id="pass" type="password" autocomplete="current-password">
+      <div class="row" style="margin-top:12px">
+        <button class="primary" id="login" type="button" data-t="login.go"></button>
+        <button id="toRedeem" type="button" data-t="login.invite"></button>
+      </div>
+      <div class="msg err" id="loginMsg" role="alert"></div>
+    </div>
+  </section>
+
+  <section id="app" hidden>
+    <div class="card">
+      <h2 data-t="me.title"></h2>
+      <div class="grid" id="standing"></div>
+      <div id="limit" style="margin-top:12px"></div>
+    </div>
+
+    <div class="card">
+      <h2 data-t="models.title"></h2>
+      <p class="muted" data-t="models.note"></p>
+      <div id="models"></div>
+    </div>
+
+    <div class="card">
+      <div class="row"><h2 style="margin:0" data-t="devices.title"></h2><span class="spacer"></span></div>
+      <p class="muted" data-t="devices.note"></p>
+      <div class="scroll"><table id="devices"></table></div>
+      <div class="row" style="margin-top:12px">
+        <input id="deviceName" style="max-width:260px" maxlength="120" data-tp="devices.name">
+        <button class="primary" id="addDevice" type="button" data-t="devices.add"></button>
+      </div>
+      <div id="newKey" hidden>
+        <p class="ok" data-t="devices.once"></p>
+        <code class="key" id="keyText"></code>
+        <div class="row"><button id="copyKey" type="button" data-t="copy"></button><span class="muted" id="copied"></span></div>
+        <p class="muted" data-t="devices.how"></p>
+        <table>
+          <tr><th>OpenAI</th><td><code id="urlOpenAI"></code></td></tr>
+          <tr><th>Anthropic</th><td><code id="urlAnthropic"></code></td></tr>
+        </table>
+      </div>
+      <div class="msg err" id="deviceMsg" role="alert"></div>
+    </div>
+
+    <div class="card">
+      <div class="row">
+        <h2 style="margin:0" data-t="usage.title"></h2><span class="spacer"></span>
+        <span id="periods" class="row"></span>
+      </div>
+      <div class="grid" id="totals" style="margin-top:12px"></div>
+      <p class="muted" id="usageNote" style="margin:10px 0 0"></p>
+      <h2 style="margin-top:16px" data-t="usage.byModel"></h2>
+      <div class="scroll"><table id="byModel"></table></div>
+      <h2 style="margin-top:16px" data-t="usage.recent"></h2>
+      <div class="scroll"><table id="recent"></table></div>
+    </div>
+
+    <div class="card">
+      <h2 data-t="pw.title"></h2>
+      <div class="grid">
+        <div><label for="pwOld" data-t="pw.old"></label><input id="pwOld" type="password" autocomplete="current-password"></div>
+        <div><label for="pwNew" data-t="pw.new"></label><input id="pwNew" type="password" autocomplete="new-password"></div>
+      </div>
+      <div class="row" style="margin-top:12px"><button id="pwGo" type="button" data-t="pw.go"></button></div>
+      <div class="msg" id="pwMsg" role="status"></div>
+    </div>
+  </section>
+</main>
+<script>
+"use strict";
+const STR = {
+  en: {
+    "lang": "中文", "logout": "Sign out", "copy": "Copy", "copied": "Copied",
+    "invite.title": "Accept your invitation", "invite.note": "Paste the invitation code your administrator sent you and choose a password. The code works once.",
+    "invite.code": "Invitation code", "invite.password": "Password (at least 10 characters)", "invite.password2": "Password again",
+    "invite.go": "Set password and sign in", "invite.have": "I already have a password", "invite.mismatch": "The two passwords are not the same",
+    "login.title": "Sign in", "login.name": "Name", "login.password": "Password", "login.go": "Sign in", "login.invite": "I have an invitation code",
+    "me.title": "Your account", "me.groups": "Groups", "me.plan": "Plan", "me.noplan": "None", "me.concurrency": "Requests at once", "me.queue": "waiting allowed",
+    "me.metered": "per million tokens: in ${in} · out ${out}", "me.period": "${price} per ${window}", "me.included": "${n} tokens included",
+    "limit.tokens": "${used} of ${limit} tokens used this ${period}", "limit.charge": "${used} of ${limit} charged this ${period}", "limit.cost": "${used} of ${limit} estimated cost this ${period}",
+    "limit.resets": "resets ${when}", "limit.none": "No limit is set for your account.", "limit.spent": "Used up: requests are refused until it resets.",
+    "day": "day", "week": "week", "month": "month",
+    "models.title": "Models you may use", "models.note": "Use the id exactly as shown as the model name in your tool.", "models.none": "No model has been given to you yet. Ask your administrator.",
+    "devices.title": "Devices and API keys", "devices.note": "Each device has its own key. Revoking one stops that device only.",
+    "devices.name": "Device name, e.g. laptop", "devices.add": "Create key", "devices.none": "No device yet.",
+    "devices.once": "This key is shown only now. Copy it and keep it private.", "devices.how": "Use it as the API key with these base URLs:",
+    "devices.revoke": "Revoke", "devices.confirm": "Revoke the key of \"${name}\"? The device stops working at once.", "devices.col.name": "Device", "devices.col.key": "Key", "devices.col.created": "Created",
+    "usage.title": "Usage", "usage.byModel": "By model", "usage.recent": "Latest requests", "usage.none": "Nothing yet in this period.",
+    "p.today": "Today", "p.7d": "7 days", "p.30d": "30 days", "p.month": "This month", "p.all": "All",
+    "t.calls": "Requests", "t.input": "Input tokens", "t.output": "Output tokens", "t.cache": "Cache-read tokens", "t.charge": "Charged", "t.fee": "Plan fee", "t.due": "Total", "t.refused": "Refused",
+    "usage.unknown": "${n} request(s) reported no usage and were counted at the ${est} tokens reserved for them.",
+    "c.time": "Time", "c.model": "Model", "c.device": "Device", "c.in": "In", "c.out": "Out", "c.status": "Status", "c.charge": "Charge", "c.how": "Counted",
+    "s.settled": "as reported", "s.estimated": "estimated", "s.released": "not counted", "s.interrupted": "interrupted", "s.refused": "refused",
+    "pw.title": "Change password", "pw.old": "Current password", "pw.new": "New password", "pw.go": "Change password", "pw.done": "Password changed. Other sign-ins were ended.",
+    "err.network": "The hub could not be reached."
+  },
+  zh: {
+    "lang": "English", "logout": "退出登录", "copy": "复制", "copied": "已复制",
+    "invite.title": "接受邀请", "invite.note": "粘贴管理员发给你的邀请码，并设置自己的密码。邀请码只能使用一次。",
+    "invite.code": "邀请码", "invite.password": "密码（至少 10 个字符）", "invite.password2": "再次输入密码",
+    "invite.go": "设置密码并登录", "invite.have": "我已经有密码", "invite.mismatch": "两次输入的密码不一致",
+    "login.title": "登录", "login.name": "用户名", "login.password": "密码", "login.go": "登录", "login.invite": "我有邀请码",
+    "me.title": "我的账号", "me.groups": "所属组", "me.plan": "套餐", "me.noplan": "无", "me.concurrency": "同时请求数", "me.queue": "可排队",
+    "me.metered": "每百万 token：输入 ${in} · 输出 ${out}", "me.period": "每${window} ${price}", "me.included": "含 ${n} token",
+    "limit.tokens": "本${period}已用 ${used} / ${limit} token", "limit.charge": "本${period}已计费 ${used} / ${limit}", "limit.cost": "本${period}估算成本 ${used} / ${limit}",
+    "limit.resets": "${when} 重置", "limit.none": "你的账号没有设置额度上限。", "limit.spent": "额度已用完：重置前的请求会被拒绝。",
+    "day": "日", "week": "周", "month": "月",
+    "models.title": "可用模型", "models.note": "在工具里把下面的 id 原样填作模型名。", "models.none": "还没有为你授权任何模型，请联系管理员。",
+    "devices.title": "设备与 API key", "devices.note": "每台设备有独立的 key。撤销其中一个只会让那台设备失效。",
+    "devices.name": "设备名，例如 laptop", "devices.add": "创建 key", "devices.none": "还没有设备。",
+    "devices.once": "这个 key 只显示这一次，请复制并妥善保管。", "devices.how": "把它作为 API key，配合以下地址使用：",
+    "devices.revoke": "撤销", "devices.confirm": "撤销「${name}」的 key？该设备会立即失效。", "devices.col.name": "设备", "devices.col.key": "Key", "devices.col.created": "创建时间",
+    "usage.title": "用量", "usage.byModel": "按模型", "usage.recent": "最近请求", "usage.none": "这段时间还没有记录。",
+    "p.today": "今天", "p.7d": "7 天", "p.30d": "30 天", "p.month": "本月", "p.all": "全部",
+    "t.calls": "请求数", "t.input": "输入 token", "t.output": "输出 token", "t.cache": "缓存读取 token", "t.charge": "按量计费", "t.fee": "套餐费", "t.due": "合计", "t.refused": "被拒绝",
+    "usage.unknown": "有 ${n} 个请求上游未返回用量，已按预留的 ${est} token 计入。",
+    "c.time": "时间", "c.model": "模型", "c.device": "设备", "c.in": "输入", "c.out": "输出", "c.status": "状态", "c.charge": "计费", "c.how": "计入方式",
+    "s.settled": "按上报", "s.estimated": "按预留估算", "s.released": "不计入", "s.interrupted": "中断", "s.refused": "被拒绝",
+    "pw.title": "修改密码", "pw.old": "当前密码", "pw.new": "新密码", "pw.go": "修改密码", "pw.done": "密码已修改，其它登录已失效。",
+    "err.network": "无法连接到 Hub。"
+  }
+};
+let lang = "en";
+try { lang = localStorage.getItem("airelay.lang") || ""; } catch (e) { lang = ""; }
+if (lang !== "en" && lang !== "zh") lang = (navigator.language || "").toLowerCase().startsWith("zh") ? "zh" : "en";
+function t(k, v) {
+  let s = (STR[lang] && STR[lang][k]) || STR.en[k] || k;
+  if (v) for (const n in v) s = s.split("${" + n + "}").join(String(v[n]));
+  return s;
+}
+const $ = (id) => document.getElementById(id);
+function el(tag, props, ...kids) {
+  const n = document.createElement(tag);
+  if (props) for (const k in props) { if (k === "class") n.className = props[k]; else if (k === "text") n.textContent = props[k]; else n.setAttribute(k, props[k]); }
+  for (const c of kids) if (c != null) n.append(c);
+  return n;
+}
+function applyStrings() {
+  document.documentElement.lang = lang === "zh" ? "zh-CN" : "en";
+  for (const n of document.querySelectorAll("[data-t]")) n.textContent = t(n.dataset.t);
+  for (const n of document.querySelectorAll("[data-tp]")) n.placeholder = t(n.dataset.tp);
+  $("lang").textContent = t("lang");
+  $("logout").textContent = t("logout");
+}
+const num = (n) => Number(n || 0).toLocaleString(lang === "zh" ? "zh-CN" : "en-US");
+const money = (n) => "$" + Number(n || 0).toFixed(Number(n || 0) > 0 && Number(n) < 0.01 ? 4 : 2);
+const when = (s) => { const d = new Date(typeof s === "number" ? s * 1000 : s); return isNaN(d) ? "" : d.toLocaleString(lang === "zh" ? "zh-CN" : "en-US", { hour12: false }); };
+
+async function call(method, path, body) {
+  const opt = { method, credentials: "same-origin", headers: { "X-Relay": "1" } };
+  if (method !== "GET") { opt.headers["Content-Type"] = "application/json"; opt.body = JSON.stringify(body || {}); }
+  let res;
+  try { res = await fetch("/relay/api/" + path, opt); } catch (e) { throw new Error(t("err.network")); }
+  let data = {};
+  try { data = await res.json(); } catch (e) { data = {}; }
+  if (!res.ok) { const err = new Error(data.error || ("HTTP " + res.status)); err.status = res.status; throw err; }
+  return data;
+}
+
+let period = "30d";
+function showSignin(redeem) {
+  $("app").hidden = true; $("signin").hidden = false; $("logout").hidden = true; $("who").textContent = "";
+  $("redeemCard").hidden = !redeem; $("loginCard").hidden = redeem;
+}
+async function start() {
+  applyStrings();
+  const m = /[#&]invite=([^&]+)/.exec(location.hash);
+  if (m) {
+    $("code").value = decodeURIComponent(m[1]);
+    history.replaceState(null, "", location.pathname);
+    showSignin(true);
+    return;
+  }
+  try { await loadAll(); } catch (e) { showSignin(false); }
+}
+async function loadAll() {
+  const me = await call("GET", "me");
+  $("signin").hidden = true; $("app").hidden = false; $("logout").hidden = false;
+  $("who").textContent = me.member.display ? me.member.display + " (" + me.member.name + ")" : me.member.name;
+  renderStanding(me.member);
+  const [models, devices] = await Promise.all([call("GET", "models"), call("GET", "devices")]);
+  renderModels(models.models);
+  renderDevices(devices.devices);
+  renderPeriods();
+  await loadUsage();
+}
+function stat(label, value, note) {
+  return el("div", { class: "stat" }, el("span", { class: "muted", text: label }), el("b", { text: value }), note ? el("span", { class: "muted", text: note }) : null);
+}
+function renderStanding(m) {
+  const box = $("standing"); box.replaceChildren();
+  box.append(stat(t("me.groups"), m.groups.length ? m.groups.map((g) => g.name).join(", ") : "—"));
+  let plan = t("me.noplan"), note = "";
+  if (m.plan) {
+    plan = m.plan.name;
+    note = m.plan.kind === "metered" ? t("me.metered", { in: money(m.plan.priceIn), out: money(m.plan.priceOut) })
+      : t("me.period", { price: money(m.plan.price), window: t(m.plan.window || "month") }) + (m.plan.tokens ? " · " + t("me.included", { n: num(m.plan.tokens) }) : "");
+  }
+  box.append(stat(t("me.plan"), plan, note));
+  box.append(stat(t("me.concurrency"), String(m.concurrency), m.queue + " " + t("me.queue")));
+  const lim = $("limit"); lim.replaceChildren();
+  const l = m.limit;
+  if (!l) { lim.append(el("span", { class: "muted", text: t("limit.none") })); return; }
+  const rows = [];
+  if (l.tokenLimit) rows.push([t("limit.tokens", { used: num(l.tokens), limit: num(l.tokenLimit), period: t(l.period) }), l.tokens / l.tokenLimit]);
+  if (l.chargeLimit) rows.push([t("limit.charge", { used: money(l.charge), limit: money(l.chargeLimit), period: t(l.period) }), l.charge / l.chargeLimit]);
+  if (l.costLimit) rows.push([t("limit.cost", { used: money(l.cost), limit: money(l.costLimit), period: t(l.period) }), l.cost / l.costLimit]);
+  for (const [text, part] of rows) {
+    const bar = el("div", { class: "bar" }, el("i"));
+    bar.firstChild.style.width = Math.max(0, Math.min(100, part * 100)).toFixed(1) + "%";
+    lim.append(el("div", null, el("span", { text: text + " · " + t("limit.resets", { when: when(l.reset) }) }), bar));
+  }
+  if (l.spent) lim.append(el("p", { class: "err", text: t("limit.spent") }));
+}
+function renderModels(list) {
+  const box = $("models"); box.replaceChildren();
+  if (!list.length) { box.append(el("span", { class: "muted", text: t("models.none") })); return; }
+  for (const m of list) box.append(el("span", { class: "chip mono", title: m.name || "", text: m.id }));
+}
+function renderDevices(list) {
+  const tb = $("devices"); tb.replaceChildren();
+  if (!list.length) { tb.append(el("tr", null, el("td", { class: "muted", text: t("devices.none") }))); return; }
+  tb.append(el("tr", null, el("th", { text: t("devices.col.name") }), el("th", { text: t("devices.col.key") }), el("th", { text: t("devices.col.created") }), el("th")));
+  for (const d of list) {
+    const b = el("button", { class: "danger", type: "button", text: t("devices.revoke") });
+    b.addEventListener("click", async () => {
+      if (!confirm(t("devices.confirm", { name: d.name }))) return;
+      b.disabled = true; $("deviceMsg").textContent = "";
+      try { await call("POST", "devices/revoke", { id: d.id }); renderDevices((await call("GET", "devices")).devices); }
+      catch (e) { $("deviceMsg").textContent = e.message; b.disabled = false; }
+    });
+    tb.append(el("tr", null, el("td", { text: d.name }), el("td", { class: "mono", text: d.masked }), el("td", { text: when(d.created) }), el("td", null, b)));
+  }
+}
+function renderPeriods() {
+  const box = $("periods"); box.replaceChildren();
+  for (const p of ["today", "7d", "30d", "month", "all"]) {
+    const b = el("button", { type: "button", text: t("p." + p), class: p === period ? "on" : "" });
+    b.setAttribute("aria-pressed", String(p === period));
+    b.addEventListener("click", async () => { period = p; renderPeriods(); await loadUsage(); });
+    box.append(b);
+  }
+}
+async function loadUsage() {
+  const s = await call("GET", "usage?period=" + encodeURIComponent(period));
+  const tot = $("totals"); tot.replaceChildren();
+  tot.append(stat(t("t.calls"), num(s.calls), s.refused ? t("t.refused") + " " + num(s.refused) : ""));
+  tot.append(stat(t("t.input"), num(s.input)));
+  tot.append(stat(t("t.output"), num(s.output)));
+  tot.append(stat(t("t.cache"), num(s.cacheRead)));
+  if (s.charge || s.fee) {
+    tot.append(stat(t("t.charge"), money(s.charge)));
+    if (s.fee) tot.append(stat(t("t.fee"), money(s.fee)));
+    tot.append(stat(t("t.due"), money(s.due)));
+  }
+  $("usageNote").textContent = s.unknown ? t("usage.unknown", { n: num(s.unknown), est: num(s.est) }) : "";
+  const bm = $("byModel"); bm.replaceChildren();
+  const rc = $("recent"); rc.replaceChildren();
+  if (!s.byModel.length) { bm.append(el("tr", null, el("td", { class: "muted", text: t("usage.none") }))); return; }
+  bm.append(el("tr", null, el("th", { text: t("c.model") }), el("th", { class: "num", text: t("t.calls") }), el("th", { class: "num", text: t("c.in") }), el("th", { class: "num", text: t("c.out") }), el("th", { class: "num", text: t("c.charge") })));
+  for (const l of s.byModel) bm.append(el("tr", null, el("td", { class: "mono", text: l.key }), el("td", { class: "num", text: num(l.calls) }), el("td", { class: "num", text: num(l.input + l.est) }), el("td", { class: "num", text: num(l.output) }), el("td", { class: "num", text: money(l.charge) })));
+  rc.append(el("tr", null, el("th", { text: t("c.time") }), el("th", { text: t("c.model") }), el("th", { text: t("c.device") }), el("th", { class: "num", text: t("c.in") }), el("th", { class: "num", text: t("c.out") }), el("th", { text: t("c.status") }), el("th", { text: t("c.how") }), el("th", { class: "num", text: t("c.charge") })));
+  for (const e of s.recent) {
+    const ok = e.status >= 200 && e.status < 300;
+    const st = el("td", null, el("span", { class: "dot " + (ok ? "ok" : e.refused ? "warn" : "bad") }), String(e.status || "—"));
+    rc.append(el("tr", null, el("td", { text: when(e.time) }), el("td", { class: "mono", text: e.model }), el("td", { text: e.device || "" }),
+      el("td", { class: "num", text: num(e.input + (e.est || 0)) }), el("td", { class: "num", text: num(e.output) }), st,
+      el("td", { text: e.refused ? t("s.refused") : t("s." + (e.settle || "settled")) }), el("td", { class: "num", text: money(e.charge) })));
+  }
+}
+
+$("lang").addEventListener("click", () => {
+  lang = lang === "zh" ? "en" : "zh";
+  try { localStorage.setItem("airelay.lang", lang); } catch (e) { /* private mode */ }
+  applyStrings();
+  if (!$("app").hidden) loadAll().catch(() => showSignin(false));
+});
+$("toLogin").addEventListener("click", () => showSignin(false));
+$("toRedeem").addEventListener("click", () => showSignin(true));
+$("redeem").addEventListener("click", async () => {
+  const msg = $("redeemMsg"); msg.textContent = "";
+  if ($("newpass").value !== $("newpass2").value) { msg.textContent = t("invite.mismatch"); return; }
+  $("redeem").disabled = true;
+  try { await call("POST", "redeem", { code: $("code").value.trim(), password: $("newpass").value }); $("newpass").value = $("newpass2").value = $("code").value = ""; await loadAll(); }
+  catch (e) { msg.textContent = e.message; }
+  $("redeem").disabled = false;
+});
+$("login").addEventListener("click", async () => {
+  const msg = $("loginMsg"); msg.textContent = "";
+  $("login").disabled = true;
+  try { await call("POST", "login", { name: $("name").value.trim(), password: $("pass").value }); $("pass").value = ""; await loadAll(); }
+  catch (e) { msg.textContent = e.message; }
+  $("login").disabled = false;
+});
+$("pass").addEventListener("keydown", (e) => { if (e.key === "Enter") $("login").click(); });
+$("logout").addEventListener("click", async () => { try { await call("POST", "logout"); } catch (e) { /* signed out either way */ } $("newKey").hidden = true; $("keyText").textContent = ""; showSignin(false); });
+$("addDevice").addEventListener("click", async () => {
+  const msg = $("deviceMsg"); msg.textContent = "";
+  $("addDevice").disabled = true;
+  try {
+    const d = await call("POST", "devices", { name: $("deviceName").value.trim() });
+    $("deviceName").value = "";
+    $("keyText").textContent = d.key; $("copied").textContent = "";
+    $("urlOpenAI").textContent = location.origin + "/v1";
+    $("urlAnthropic").textContent = location.origin;
+    $("newKey").hidden = false;
+    renderDevices((await call("GET", "devices")).devices);
+  } catch (e) { msg.textContent = e.message; }
+  $("addDevice").disabled = false;
+});
+$("copyKey").addEventListener("click", async () => {
+  try { await navigator.clipboard.writeText($("keyText").textContent); $("copied").textContent = t("copied"); }
+  catch (e) { const r = document.createRange(); r.selectNodeContents($("keyText")); const s = getSelection(); s.removeAllRanges(); s.addRange(r); }
+});
+$("pwGo").addEventListener("click", async () => {
+  const msg = $("pwMsg"); msg.textContent = ""; msg.className = "msg";
+  $("pwGo").disabled = true;
+  try { await call("POST", "password", { old: $("pwOld").value, password: $("pwNew").value }); $("pwOld").value = $("pwNew").value = ""; msg.textContent = t("pw.done"); msg.className = "msg ok"; }
+  catch (e) { msg.textContent = e.message; msg.className = "msg err"; }
+  $("pwGo").disabled = false;
+});
+start();
+</script>
+</body>
+</html>

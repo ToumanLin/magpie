@@ -11,6 +11,8 @@ import (
 
 	"github.com/yetone/magpie/internal/backup"
 	"github.com/yetone/magpie/internal/edit"
+	"github.com/yetone/magpie/internal/mode"
+	"github.com/yetone/magpie/internal/settings"
 )
 
 // backupCmd writes every provider, setting, profile and agent model, and
@@ -33,11 +35,14 @@ func backupCmd(args []string) error {
 		}
 	}
 	if file == "" {
-		file = "magpie" + backup.Ext
+		file = mode.App() + backup.Ext
 	}
 	b, err := backup.Collect(keys, version)
 	if err != nil {
 		return err
+	}
+	if mode.IsClient() {
+		b.ForClient() // the hub connection, agents, settings and library: no upstream key
 	}
 	if !lib {
 		b.Library = nil
@@ -64,7 +69,14 @@ func backupCmd(args []string) error {
 		fmt.Printf("; library: %d MCP servers, %d skills", len(l.MCP), len(l.Skills))
 	}
 	fmt.Println()
-	fmt.Println(muted.Render("Subscriptions are not in it: sign in to them on the other machine. Keep the passphrase: without it the file can't be opened."))
+	switch mode.Current() {
+	case mode.Client:
+		fmt.Println(muted.Render("It holds this computer's hub connection" + map[bool]string{true: " and device key", false: ", without its device key"}[keys] + ", no upstream account. Restored on another computer with its key, both are one device at the hub: connect that one anew (mag hub connect) for a device of its own. Keep the passphrase: without it the file can't be opened."))
+	case mode.Server:
+		fmt.Println(muted.Render("Subscriptions are not in it: sign in to them on the other machine. Members, groups, plans and the ledger are not in it either: copy relay.json and usage.jsonl from " + tilde(settings.Dir()) + ". Keep the passphrase: without it the file can't be opened."))
+	default:
+		fmt.Println(muted.Render("Subscriptions are not in it: sign in to them on the other machine. Keep the passphrase: without it the file can't be opened."))
+	}
 	return nil
 }
 
@@ -99,6 +111,9 @@ func restoreCmd(args []string) error {
 	b, err := backup.Open(data, pass)
 	if err != nil {
 		return err
+	}
+	if mode.IsClient() {
+		b.ForClient() // whatever made the file, Mag takes in no upstream key
 	}
 	r, err := backup.Restore(b, parts)
 	if err != nil {

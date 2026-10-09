@@ -19,6 +19,7 @@ import (
 	"github.com/yetone/magpie/internal/davsync"
 	"github.com/yetone/magpie/internal/gateway"
 	"github.com/yetone/magpie/internal/imagemcp"
+	"github.com/yetone/magpie/internal/mode"
 	"github.com/yetone/magpie/internal/netproxy"
 	"github.com/yetone/magpie/internal/proc"
 	"github.com/yetone/magpie/internal/profile"
@@ -137,11 +138,11 @@ func main() {
 				fmt.Println("magpie", version)
 				return
 			case "-h", "--help", "help":
-				fmt.Print(usage)
+				fmt.Print(modeUsage())
 				return
 			}
 		}
-		fmt.Fprintln(os.Stderr, "magpie:", err)
+		fmt.Fprintln(os.Stderr, mode.App()+":", err)
 		os.Exit(1)
 	}
 	slices.Sort(ignored)
@@ -167,7 +168,7 @@ func main() {
 			code = e.code
 		}
 		if msg := err.Error(); msg != "" {
-			fmt.Fprintln(os.Stderr, "magpie:", msg)
+			fmt.Fprintln(os.Stderr, mode.App()+":", msg)
 		}
 		os.Exit(code)
 	}
@@ -192,34 +193,46 @@ func run(args []string) error {
 		// (agent.DisconnectPreview)
 		return agent.DryRun(args[1])
 	}
+	// a command that is the other program's is said to be, before anything
+	// is read or written for it
+	if err := wrongProgram(args); err != nil {
+		return err
+	}
 	// started by an update, the magpie it replaces goes first: the moves
 	// below write the files it may still be writing
 	update.AwaitPredecessor()
 	makeDirs()
 	settings.Migrate()
-	// the providers and settings read once for every agent's fields, which
-	// the moves below look at (a write among them reads them again)
-	release := provider.Hold()
-	agent.RenameLegacy()
-	agent.MoveCursorEfforts()
-	agent.MoveAntigravityEfforts()
-	agent.MoveOffAccountIDs()
-	release()
-	// a provider added, edited or removed, or a list fetched anew, reaches
-	// the model lists agents keep in files of their own
-	catalog.Changed = agent.SyncCatalog
-	// a model Claude Code names that magpie doesn't serve goes to the one
-	// it is set to use for that tier
-	gateway.StandIn = agent.StandIn
-	// the setup kept the same on every computer, by whichever serves
-	gateway.WhileServing = append(gateway.WhileServing, davsync.Run)
-	// and dsh's patch lists, which dsh reads live: a route left behind by
-	// something else writing the file fails every session there until
-	// magpie writes its own list again
-	gateway.WhileServing = append(gateway.WhileServing, agent.KeepDshWired)
-	// and Cursor Private Inference's variables, which the Mac's launchd
-	// forgets at a restart, for the gateway's address now
-	gateway.WhileServing = append(gateway.WhileServing, agent.KeepCursorLocalEnv)
+	// Pie serves other computers' agents and wires none here: it neither
+	// moves nor writes any agent's files on the computer it runs on
+	if !mode.IsServer() {
+		// the providers and settings read once for every agent's fields, which
+		// the moves below look at (a write among them reads them again)
+		release := provider.Hold()
+		agent.RenameLegacy()
+		agent.MoveCursorEfforts()
+		agent.MoveAntigravityEfforts()
+		agent.MoveOffAccountIDs()
+		release()
+		// a provider added, edited or removed, or a list fetched anew, reaches
+		// the model lists agents keep in files of their own
+		catalog.Changed = agent.SyncCatalog
+		// a model Claude Code names that magpie doesn't serve goes to the one
+		// it is set to use for that tier
+		gateway.StandIn = agent.StandIn
+		// and dsh's patch lists, which dsh reads live: a route left behind by
+		// something else writing the file fails every session there until
+		// magpie writes its own list again
+		gateway.WhileServing = append(gateway.WhileServing, agent.KeepDshWired)
+		// and Cursor Private Inference's variables, which the Mac's launchd
+		// forgets at a restart, for the gateway's address now
+		gateway.WhileServing = append(gateway.WhileServing, agent.KeepCursorLocalEnv)
+	}
+	if mode.Current() == "" {
+		// the setup kept the same on every computer, by whichever serves:
+		// magpie's own. Mag's and Pie's files are not one another's to sync
+		gateway.WhileServing = append(gateway.WhileServing, davsync.Run)
+	}
 	// and the request archive, when it is on, goes to the bucket sync is to
 	gateway.ArchiveBucket = func() (gateway.Putter, bool) {
 		if b, ok := davsync.S3Bucket(); ok {
@@ -230,6 +243,9 @@ func run(args []string) error {
 	if len(args) == 0 {
 		if hasGUI {
 			return runGUI(true, "")
+		}
+		if mode.IsServer() {
+			return webCmd(nil) // a server's page is the browser's
 		}
 		return runTUI()
 	}
@@ -265,11 +281,18 @@ func run(args []string) error {
 	case "autostart":
 		return autostartCmd(args[1:])
 	case "-h", "--help", "help":
+		fmt.Print(modeUsage())
+		return nil
+	case "help-magpie":
 		fmt.Print(usage)
 		return nil
 	case "-v", "--version", "version":
-		fmt.Println("magpie", version)
+		fmt.Println(mode.App(), version)
 		return nil
+	case "hub":
+		return hubCmd(args[1:])
+	case "relay":
+		return relayCmd(args[1:])
 	case "ls", "list":
 		// in the order the app lists them; those hidden there come last, dimmed
 		shown, hidden := settings.Arrange(settings.Load(), agent.Detected(), func(a *agent.Agent) string { return a.ID })
@@ -308,7 +331,7 @@ func run(args []string) error {
 	case "group":
 		return groupCmd(args)
 	case "serve":
-		return serve()
+		return serve(args[1:])
 	case "gateway-key":
 		return gatewayKeys(args)
 	case "accounts", "account":

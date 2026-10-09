@@ -3038,6 +3038,12 @@ func (s *Server) serveClaudeSubscription(w http.ResponseWriter, r *http.Request,
 			// A saved account must not resume it after the sign-in moves.
 			owner += "\x00" + ownHome
 		}
+		// on a hub a run is its caller's alone: two members whose
+		// conversations read the same never resume one another's
+		// (ownerAccount reads the account and ownHome before it)
+		if sc := scopeOf(r.Context()); sc != "" {
+			owner += "\x00" + sc
+		}
 	}
 	start := func(ctx context.Context, req *Request) (*subscriptionRun, <-chan Event, error) {
 		ctx = p.Via(ctx) // the account's own proxy, its CLI run's too

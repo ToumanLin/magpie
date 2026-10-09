@@ -81,7 +81,7 @@ func setPort(p int) (portJSON, error) {
 	}
 	want := p
 	if want == 0 {
-		want = settings.DefaultPort
+		want = settings.PortDefault()
 	}
 	cur := settings.Load()
 	was := cur.Port

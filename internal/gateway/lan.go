@@ -15,7 +15,9 @@ import (
 
 	"github.com/yetone/magpie/internal/access"
 	"github.com/yetone/magpie/internal/budget"
+	"github.com/yetone/magpie/internal/mode"
 	"github.com/yetone/magpie/internal/provider"
+	hub "github.com/yetone/magpie/internal/relay"
 	"github.com/yetone/magpie/internal/settings"
 	"github.com/yetone/magpie/internal/usage"
 )
@@ -56,7 +58,7 @@ func pinnedHost() string {
 func Port() string {
 	_, p, err := net.SplitHostPort(Addr())
 	if err != nil {
-		return strconv.Itoa(settings.DefaultPort)
+		return strconv.Itoa(settings.PortDefault())
 	}
 	return p
 }
@@ -104,7 +106,7 @@ func PublicURL() string { return publicURL() }
 // shared, so anyone who reaches it is let in with any key. Shared, it asks
 // for an enabled gateway key instead.
 func OpenToAnyone() bool {
-	if settings.Load().LAN {
+	if shared() {
 		return false
 	}
 	h, _, err := net.SplitHostPort(Addr())
@@ -220,7 +222,12 @@ func (s *Server) Relisten() error {
 // lanGuard requires a named caller key on the local network. An explicit
 // MAGPIE_ADDR without LAN sharing retains its existing open-gateway behavior.
 func lanGuard(next http.Handler) http.Handler {
+	signed := hubGuard(next)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if mode.IsServer() {
+			signed.ServeHTTP(w, r) // a hub signs every request (hub.go)
+			return
+		}
 		remote := !local(r)
 		shared := settings.Load().LAN
 		// a gateway MAGPIE_ADDR opens to the network lets anyone in, through
@@ -256,7 +263,7 @@ func lanGuard(next http.Handler) http.Handler {
 // callerGuard also covers embedded handlers used by the web app and tests.
 func callerGuard(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if access.Caller(r.Context()).KeyID == "" && managedKey(r) && (local(r) || settings.Load().LAN) {
+		if access.Caller(r.Context()).KeyID == "" && managedKey(r) && (local(r) || shared()) {
 			var ok bool
 			r, ok = identifyCaller(w, r)
 			if !ok {
@@ -284,6 +291,13 @@ func identifyCaller(w http.ResponseWriter, r *http.Request) (*http.Request, bool
 	if ok {
 		r = r.WithContext(access.WithIdentity(r.Context(), who))
 	}
+	return withGatewayToken(r), true
+}
+
+// withGatewayToken is r with magpie's own token where the caller's key
+// was, in every place a key is read: the key goes no further than the
+// guard that took it.
+func withGatewayToken(r *http.Request) *http.Request {
 	r.Header = r.Header.Clone()
 	r.Header.Set("Authorization", "Bearer "+Token)
 	for _, h := range []string{"x-api-key", "x-goog-api-key"} {
@@ -297,7 +311,7 @@ func identifyCaller(w http.ResponseWriter, r *http.Request) (*http.Request, bool
 		u.RawQuery = q.Encode()
 		r.URL = &u
 	}
-	return r, true
+	return r
 }
 
 // accountOf is the subscription account p answers as, named as the Routing
@@ -313,6 +327,8 @@ func accountOf(p provider.Provider) string {
 func appendUsage(r *http.Request, rec usage.Record) {
 	who := access.Caller(r.Context())
 	rec.CallerKeyID, rec.CallerKeyName = who.KeyID, who.KeyName
+	// a member's call says whose it is and how its reservation ended
+	hub.Stamp(who, openOf(r.Context()), &rec)
 	rec.Local = local(r)
 	if r.Context().Value(otelRequestKey{}) != nil {
 		rec.SkipOTel = true

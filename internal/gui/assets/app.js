@@ -15,6 +15,14 @@ const web = !!window.bootPrefs?.web;
 // General turns it off, and they are back.
 let gatewayMode = web && !!window.bootPrefs?.gateway;
 const GATEWAY_HIDES = ["agents", "sessions", "library"];
+// AI Relay (relay.js, package mode): this page is Mag's, the member's
+// client ("client"), or Pie's, the server's ("server"), and leaves out the
+// other's pages; "" for magpie, which has neither's own page. The routes
+// behind a page left out answer 403 whatever asks (modeGuard).
+const relayMode = window.bootPrefs?.relay || "";
+const RELAY_PAGES = { client: ["hub", "agents", "usage", "sessions", "library"], server: ["providers", "gateway", "routing", "members", "usage", "plugins"] };
+const relayHides = (v) => !!relayMode && v !== "settings" && !RELAY_PAGES[relayMode].includes(v) || !relayMode && (v === "hub" || v === "members");
+const relayHome = relayMode ? RELAY_PAGES[relayMode][0] : "agents";
 // The window is dragged by its header, and only where the header says so
 // (--wails-draggable), so the tabs and buttons in it stay plain clicks.
 // Outside the app — a browser on the gateway's page, or on `magpie web` —
@@ -20032,6 +20040,8 @@ for (const v of document.querySelectorAll(".view")) {
 async function show(v) {
   // a page gateway mode leaves out (a link to it, an address kept) opens Providers
   if (gatewayMode && GATEWAY_HIDES.includes(v)) v = "providers";
+  // nor a page that is the other of AI Relay's programs'
+  if (relayHides(v)) v = relayHome;
   if (v !== view) {
     if (view === "providers" && (editing !== null || importing || importingApps)) {
       if (!await cancelEdit(true)) return false;
@@ -20049,7 +20059,7 @@ async function show(v) {
     }
   }
   view = v;
-  const title = ({ agents: "Agents", providers: "Providers", gateway: "Gateway", routing: "Routing", usage: "Usage", sessions: "Sessions", library: "Library", plugins: "Plugins", settings: "Settings" })[v];
+  const title = ({ agents: "Agents", providers: "Providers", gateway: "Gateway", routing: "Routing", usage: "Usage", sessions: "Sessions", library: "Library", plugins: "Plugins", settings: "Settings", hub: "Hub", members: "Members" })[v];
   $("#pageTitle").dataset.en = title;
   $("#pageTitle").textContent = t(title);
   if (mode === "window") {
@@ -20061,7 +20071,7 @@ async function show(v) {
     slide($("#nav"), "nav"); navInSight();
   }
   $("#prefs").classList.toggle("on", v === "settings");
-  for (const id of ["agents", "providers", "gateway", "routing", "usage", "sessions", "library", "plugins", "settings"]) $("#view-" + id).hidden = v !== id;
+  for (const id of ["agents", "providers", "gateway", "routing", "usage", "sessions", "library", "plugins", "settings", "hub", "members"]) $("#view-" + id).hidden = v !== id;
   // back to where the reader was in it, and again once it has what it loads
   const back = () => backToReader($("#view-" + v));
   requestAnimationFrame(back);
@@ -20075,6 +20085,8 @@ async function show(v) {
   if (v === "library") window.loadLibrary?.()?.then(back);
   if (v === "plugins") window.loadPlugins?.()?.then(back);
   if (v === "sessions") window.loadSessionsPage?.()?.then(back);
+  if (v === "hub") window.loadHubPage?.()?.then(back);
+  if (v === "members") window.loadMembersPage?.()?.then(back);
   syncTitle();
   syncURL();
   return true;
@@ -20085,7 +20097,7 @@ async function show(v) {
 function syncURL() {
   if (mode !== "window") return;
   const q = new URLSearchParams(location.search);
-  if (view === "agents") q.delete("view"); else q.set("view", view);
+  if (view === relayHome) q.delete("view"); else q.set("view", view);
   if (view === "providers" && typeof editing === "string") q.set("edit", editing); else q.delete("edit");
   if (view === "settings") q.set("tab", setShown); else q.delete("tab");
   const s = q.size ? "?" + q : location.pathname;
@@ -20626,7 +20638,18 @@ if (mode === "window" && params.get("view") === "usage") {
   for (const k of ["tab", "provider", "agent", "computer", "card", "purpose", "via"]) u.searchParams.delete(k);
   history.replaceState(null, "", u);
 }
-if (mode === "window" && ["providers", "gateway", "routing", "usage", "sessions", "library", "plugins", "settings"].includes(params.get("view"))) show(params.get("view"));
+// AI Relay's program shows its own tabs, its first page first, and its name
+if (relayMode) {
+  document.body.classList.add("relay-" + relayMode);
+  document.title = relayMode === "server" ? "Pie" : "Mag";
+  const nav = $("#nav");
+  for (const b of nav.querySelectorAll("button[data-view]")) b.hidden = relayHides(b.dataset.view);
+  for (const v of [...RELAY_PAGES[relayMode]].reverse()) { const b = nav.querySelector(`button[data-view="${v}"]`); if (b) nav.prepend(b); }
+  const brand = $(".brand span:last-child");
+  if (brand) brand.textContent = relayMode === "client" ? "mag" : "pie";
+}
+if (mode === "window" && ["agents", "providers", "gateway", "routing", "usage", "sessions", "library", "plugins", "settings", "hub", "members"].includes(params.get("view")) && params.get("view") !== view) show(params.get("view"));
+else if (mode === "window" && relayMode && view !== relayHome) show(relayHome);
 else if (mode === "window" && !gatewayMode) slide($("#nav"), "nav");
 // in gateway mode the first page is Providers, Agents' tab gone
 if (gatewayMode) setGatewayMode(true);

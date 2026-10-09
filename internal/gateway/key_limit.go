@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"bytes"
+	"context"
 	"io"
 	"net/http"
 	"strconv"
@@ -11,6 +12,7 @@ import (
 	"github.com/yetone/magpie/internal/access"
 	"github.com/yetone/magpie/internal/budget"
 	"github.com/yetone/magpie/internal/provider"
+	hub "github.com/yetone/magpie/internal/relay"
 	"github.com/yetone/magpie/internal/usage"
 )
 
@@ -27,13 +29,15 @@ var limitClock = time.Now
 func keyLimited(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		who := access.Caller(r.Context())
-		if !who.Limit.Limited() || r.Method != http.MethodPost || strings.HasPrefix(r.URL.Path, "/_magpie/") || strings.HasPrefix(r.URL.Path, "/mcp/") || strings.HasSuffix(r.URL.Path, "/count_tokens") {
+		member := who.Member != ""
+		if !member && !who.Limit.Limited() || r.Method != http.MethodPost || strings.HasPrefix(r.URL.Path, "/_magpie/") || strings.HasPrefix(r.URL.Path, "/mcp/") || strings.HasPrefix(r.URL.Path, "/relay/") || strings.HasSuffix(r.URL.Path, "/count_tokens") {
 			next.ServeHTTP(w, r)
 			return
 		}
 		size, model := r.ContentLength, ""
-		// a compressed body (#1223) is reserved at its decoded size and model
-		if enc := r.Header.Get("Content-Encoding"); who.Limit.Cost > 0 || size < 0 || (enc != "" && !strings.EqualFold(enc, "identity")) {
+		// a compressed body (#1223) is reserved at its decoded size and model;
+		// a member's request is always read, for the model its ledger names
+		if enc := r.Header.Get("Content-Encoding"); member || who.Limit.Cost > 0 || size < 0 || (enc != "" && !strings.EqualFold(enc, "identity")) {
 			b, status, err := readBoundedRequestBody(w, r, requestLimits{})
 			if err != nil {
 				writeError(w, protoOfPath(r.URL.Path), status, err.Error())
@@ -42,8 +46,15 @@ func keyLimited(next http.Handler) http.Handler {
 			r.Body, r.ContentLength = io.NopCloser(bytes.NewReader(b)), int64(len(b))
 			size, model = int64(len(b)), budget.ModelOf(b)
 		}
+		// a member's turn first: a request that waits holds nothing of the
+		// member's limit while it does
+		turn, ok := memberTurn(w, r, who, model)
+		if !ok {
+			return
+		}
+		defer turn()
 		now := limitClock()
-		release, refused := budget.Reserve(who, size, model, now)
+		hold, refused := budget.ReserveFor(who, size, model, now)
 		if refused != nil {
 			msg := refused.Error()
 			w.Header().Set("Retry-After", strconv.Itoa(refused.RetryAfter(now)))
@@ -52,11 +63,20 @@ func keyLimited(next http.Handler) http.Handler {
 			w.Header().Set("X-Magpie-Limit-Reset", refused.Reset.Format(time.RFC3339))
 			writeError(w, protoOfPath(r.URL.Path), http.StatusTooManyRequests, msg)
 			c := callerOf(r)
+			errType := "gateway_key_limit"
+			if refused.Member != "" {
+				errType = "relay_member_limit"
+			}
 			appendUsage(r, usage.Record{Time: now, Agent: c.agent, Via: c.via, Requested: model, Status: http.StatusTooManyRequests, Rejected: true,
-				Error: msg, ErrType: "gateway_key_limit", Endpoint: r.URL.Path, Session: sessionOf(r.Header), NativeSession: nativeSessionOf(r.Header)})
+				Error: msg, ErrType: errType, Endpoint: r.URL.Path, Session: sessionOf(r.Header), NativeSession: nativeSessionOf(r.Header)})
 			return
 		}
-		defer release()
+		defer hold.Release()
+		if open := hub.Begin(who, model, r.URL.Path, hold.Est, now); open != nil {
+			// in the ledger's journal until the request ends, however it does
+			defer open.Close()
+			r = r.WithContext(context.WithValue(r.Context(), openKey{}, open))
+		}
 		next.ServeHTTP(w, r)
 	})
 }
@@ -79,6 +99,12 @@ func protoOfPath(path string) provider.Protocol {
 // none or a request without one.
 func (s *Server) keyLimit(w http.ResponseWriter, r *http.Request) {
 	who := access.Caller(r.Context())
+	if who.Member != "" {
+		// a member's device: the member's own limit, over all its devices
+		st := budget.OfMember(who.Member, who.MemberLimit, limitClock())
+		writeJSON(w, 200, map[string]any{"limited": st != nil, "key": who.KeyName, "member": who.MemberName, "limit": st})
+		return
+	}
 	if who.KeyID == "" || !who.Limit.Limited() {
 		writeJSON(w, 200, map[string]any{"limited": false, "key": who.KeyName})
 		return

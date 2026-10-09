@@ -14,6 +14,7 @@
 <link rel="stylesheet" href="plugins.css">
 <link rel="stylesheet" href="sessions.css">
 <link rel="stylesheet" href="context.css">
+<link rel="stylesheet" href="relay.css">
 <link rel="stylesheet" href="omarchy.css">
 </head>
 <body>
@@ -35,6 +36,8 @@
     <button data-view="sessions" data-t>Sessions</button>
     <button data-view="library" data-t>Library</button>
     <button data-view="plugins" data-t>Plugins</button>
+    <button data-view="hub" hidden data-t>Hub</button>
+    <button data-view="members" hidden data-t>Members</button>
   </nav>
   <div class="actions" style="--wails-draggable:no-drag">
     <span class="update-wrap">
@@ -227,6 +230,10 @@
 <main class="view" id="view-library" hidden></main>
 
 <main class="view" id="view-plugins" hidden></main>
+
+<main class="view" id="view-hub" hidden></main>
+
+<main class="view" id="view-members" hidden></main>
 
 <main class="view" id="view-settings" hidden>
   <div class="row-head set-head"><div class="warm-tabs set-tabs" id="setTabs" role="tablist" aria-label="Settings">
@@ -500,6 +507,7 @@
 </div>
 
 <script src="i18n.js"></script>
+<script src="relay-i18n.js"></script>
 <script src="caller-keys.js"></script>
 <script src="purposes.js"></script>
 <script src="app.js"></script>
@@ -508,5 +516,6 @@
 <script src="plugins.js"></script>
 <script src="sessions.js"></script>
 <script src="context.js"></script>
+<script src="relay.js"></script>
 </body>
 </html>

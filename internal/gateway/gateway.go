@@ -29,11 +29,13 @@ import (
 	"github.com/tidwall/gjson"
 
 	"github.com/yetone/magpie/internal/awake"
+	"github.com/yetone/magpie/internal/mode"
 
 	"github.com/yetone/magpie/internal/netproxy"
 	"github.com/yetone/magpie/internal/plugin"
 	"github.com/yetone/magpie/internal/provider"
 	"github.com/yetone/magpie/internal/redact"
+	hub "github.com/yetone/magpie/internal/relay"
 	"github.com/yetone/magpie/internal/settings"
 	"github.com/yetone/magpie/internal/usage"
 )
@@ -387,6 +389,9 @@ var WhileServing []func(context.Context)
 // serving, which is fine for the caller to ignore.
 func (s *Server) ListenAndServe(ctx context.Context) error {
 	migrateLANKeyBestEffort()
+	if err := hubRefusesOpen(); err != nil {
+		return err
+	}
 	ln, err := Listen(listenAddr())
 	if err != nil {
 		return err
@@ -394,35 +399,15 @@ func (s *Server) ListenAndServe(ctx context.Context) error {
 	s.lnMu.Lock()
 	s.ln = ln
 	s.lnMu.Unlock()
+	hubStart()
 	stopOTel := usage.StartOTel()
 	defer stopOTel()
 	srv := &http.Server{Handler: lanGuard(s.Handler()), ReadHeaderTimeout: 30 * time.Second, IdleTimeout: 5 * time.Minute}
-	// the magpie serving the gateway, and only it, keeps the saved accounts
-	// signed in, so two never refresh one sign-in at once
-	go provider.KeepLoginsAlive(ctx)
-	// and signs Codex and Claude Code in to their next account when the
-	// one they are on is spent
-	go provider.KeepOnAnAccountWithRoom(ctx)
-	// and, when settings say to, starts its accounts' next windows as the last reset
-	go provider.KeepCodexWindowsWarm(ctx)
-	go provider.KeepClaudeWindowsWarm(ctx, warmClaude)
-	// and spends a Codex reset about to run out unused, for the accounts
-	// that let it
-	go provider.KeepResetsFromRunningOut(ctx)
-	// and checks the WorkBuddy accounts in for the day's credits
-	go provider.KeepWorkBuddyCheckedIn(ctx)
-	// and the Trae CN accounts (#694), and the MiniMax Code ones (#811)
-	go provider.KeepTraeCheckedIn(ctx)
-	go provider.KeepMiniMaxCheckedIn(ctx)
-	// and the Qoder ones' daily credits
-	go provider.KeepQoderCheckedIn(ctx)
-	// and the accounts of the plugins that check in themselves
-	go provider.KeepPluginsCheckedIn(ctx)
-	// and moves the built-in subscriptions being retired onto their plugins
-	go provider.KeepRetiringMoved(ctx)
-	// and keeps the community's plugins up to date, noting others' updates, and the Bun they run on
-	go plugin.KeepUpdated(ctx)
-	go plugin.KeepBunUpdated(ctx)
+	// Mag keeps no account of its own: nothing to keep signed in, warm or
+	// checked in, and no plugin to update
+	if !mode.IsClient() {
+		s.keepAccounts(ctx)
+	}
 	// and, when settings say to, keeps the computer awake while agents work
 	go awake.Keep(ctx, func() awake.Level {
 		switch set := settings.Load(); {
@@ -467,6 +452,37 @@ func (s *Server) ListenAndServe(ctx context.Context) error {
 		}
 		ln = next
 	}
+}
+
+// keepAccounts starts what the magpie serving the gateway does for its
+// accounts and plugins until ctx ends.
+func (s *Server) keepAccounts(ctx context.Context) {
+	// the magpie serving the gateway, and only it, keeps the saved accounts
+	// signed in, so two never refresh one sign-in at once
+	go provider.KeepLoginsAlive(ctx)
+	// and signs Codex and Claude Code in to their next account when the
+	// one they are on is spent
+	go provider.KeepOnAnAccountWithRoom(ctx)
+	// and, when settings say to, starts its accounts' next windows as the last reset
+	go provider.KeepCodexWindowsWarm(ctx)
+	go provider.KeepClaudeWindowsWarm(ctx, warmClaude)
+	// and spends a Codex reset about to run out unused, for the accounts
+	// that let it
+	go provider.KeepResetsFromRunningOut(ctx)
+	// and checks the WorkBuddy accounts in for the day's credits
+	go provider.KeepWorkBuddyCheckedIn(ctx)
+	// and the Trae CN accounts (#694), and the MiniMax Code ones (#811)
+	go provider.KeepTraeCheckedIn(ctx)
+	go provider.KeepMiniMaxCheckedIn(ctx)
+	// and the Qoder ones' daily credits
+	go provider.KeepQoderCheckedIn(ctx)
+	// and the accounts of the plugins that check in themselves
+	go provider.KeepPluginsCheckedIn(ctx)
+	// and moves the built-in subscriptions being retired onto their plugins
+	go provider.KeepRetiringMoved(ctx)
+	// and keeps the community's plugins up to date, noting others' updates, and the Bun they run on
+	go plugin.KeepUpdated(ctx)
+	go plugin.KeepBunUpdated(ctx)
 }
 
 // Handler routes the client APIs.
@@ -523,6 +539,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/mcp/{name}", s.mcpProxy)
 	mux.HandleFunc(CodexPath+"/", s.codexBackend)
 	mux.HandleFunc("GET /v1beta/models", s.geminiModels)
+	if mode.IsServer() {
+		// the member's page and its API, signed in by themselves (package relay)
+		hub.Register(mux)
+	}
 	mux.HandleFunc("POST /v1beta/models/{call...}", s.gemini)
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		writeError(w, provider.Chat, http.StatusNotFound, "magpie serves /v1/chat/completions, /v1/responses, /v1/messages, /v1/systemone, /v1/images/generations, /v1/images/edits, /v1/videos, /v1/embeddings, /v1/rerank and /v1beta/models/*")
@@ -546,6 +566,12 @@ func responsesOverHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) info(w http.ResponseWriter, r *http.Request) {
+	if mode.IsServer() {
+		// a hub answers this unsigned: its name and version, nothing of what it has
+		writeJSON(w, 200, map[string]any{"name": "magpie", "version": Version, "relay": "hub", "member": "/relay/",
+			"apis": []string{"/v1/chat/completions", "/v1/responses", "/v1/messages", "/v1/models"}})
+		return
+	}
 	writeJSON(w, 200, map[string]any{"name": "magpie", "version": Version, "models": len(provider.Catalog()), "window": Window,
 		"apis": []string{"/v1/chat/completions", "/v1/responses", "/v1/messages", "/v1/systemone", "/v1beta/models/{model}:generateContent", "/v1/images/generations", "/v1/images/edits", "/v1/videos", "/v1/embeddings", "/v1/rerank", "/v1/magpie/quotas", "/v1/magpie/quotas/history", "/v1/magpie/route"}})
 }
@@ -556,6 +582,9 @@ func (s *Server) info(w http.ResponseWriter, r *http.Request) {
 // machine, and another only with the key of the gateway shared on the
 // local network — never a gateway MAGPIE_ADDR opens without one.
 func (s *Server) quotas(w http.ResponseWriter, r *http.Request) {
+	if memberOnly(w, r) {
+		return
+	}
 	if !local(r) && !sharedWith(r) {
 		writeError(w, provider.Chat, http.StatusForbidden, "magpie's quotas are told to another machine only when magpie is shared on the local network (Settings → Share on local network) and the request carries its API key (Authorization: Bearer <key> or x-api-key: <key>)")
 		return
@@ -570,6 +599,9 @@ func (s *Server) quotas(w http.ResponseWriter, r *http.Request) {
 // ?days= back (45 at most), ?provider= and ?user= to pick an account.
 // /v1/magpie/quotas stays the snapshot.
 func (s *Server) quotasHistory(w http.ResponseWriter, r *http.Request) {
+	if memberOnly(w, r) {
+		return
+	}
 	if !local(r) && !sharedWith(r) {
 		writeError(w, provider.Chat, http.StatusForbidden, "magpie's quotas are told to another machine only when magpie is shared on the local network (Settings → Share on local network) and the request carries its API key (Authorization: Bearer <key> or x-api-key: <key>)")
 		return
@@ -582,6 +614,9 @@ func (s *Server) quotasHistory(w http.ResponseWriter, r *http.Request) {
 // another magpie that has this one as its provider (remote-magpie) to
 // show: its own cache, however old, and no vendor asked for it.
 func (s *Server) quotaCards(w http.ResponseWriter, r *http.Request) {
+	if memberOnly(w, r) {
+		return
+	}
 	if !local(r) && !sharedWith(r) {
 		writeError(w, provider.Chat, http.StatusForbidden, "magpie's quotas are told to another machine only when magpie is shared on the local network (Settings → Share on local network) and the request carries its API key (Authorization: Bearer <key> or x-api-key: <key>)")
 		return
@@ -604,6 +639,9 @@ const remoteRefreshGap = 30 * time.Second
 // card (?provider=, &user=) is read again here, or every card when none
 // is named, then the cards are answered as quotaCards answers them.
 func (s *Server) quotaCardsRefresh(w http.ResponseWriter, r *http.Request) {
+	if memberOnly(w, r) {
+		return
+	}
 	if !local(r) && !sharedWith(r) {
 		writeError(w, provider.Chat, http.StatusForbidden, "magpie's quotas are told to another machine only when magpie is shared on the local network (Settings → Share on local network) and the request carries its API key (Authorization: Bearer <key> or x-api-key: <key>)")
 		return
@@ -1343,6 +1381,7 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, from provider.Pro
 		if isGroup {
 			scope = provider.GroupPrefix + g.ID
 		}
+		scope = scoped(r.Context(), scope)
 		sealedLead = leadProvider(scope, parent)
 		sealers = []string{sealedLead, leadProvider(scope, conversationID(r.Header, body))}
 		if !(isGroup && slices.ContainsFunc(ms, func(m provider.Member) bool { return s.sealedReader(m.Provider, m.Model, sealers) }) || !isGroup && s.sealedReader(p, model, sealers)) {
@@ -1366,7 +1405,7 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, from provider.Pro
 		return g.Ruled() || slices.ContainsFunc(m.Via, provider.Group.Ruled)
 	}) {
 		if req, err := parse(from, body); err == nil {
-			ruleReq, ruleAt, words = req, ruleKey(g, r.Header, req), firstWords(req)
+			ruleReq, ruleAt, words = req, scoped(r.Context(), ruleKey(g, r.Header, req)), firstWords(req)
 		}
 	}
 	if ruleReq != nil && g.Ruled() {
@@ -1441,13 +1480,15 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, from provider.Pro
 	// a conversation's affinity is to one model: another's cache is its
 	// own, and an agent's side requests (a title, a summary) to a smaller
 	// model leave the conversation where it is
-	scope, mode, rotate := p.ID+"/"+model, p.Affinity, p.Routing == provider.Rotate
+	// (and to one caller on a hub: scoped keeps a member's conversations
+	// apart from every other member's, whatever session id each names)
+	scope, mode, rotate := scoped(r.Context(), p.ID+"/"+model), p.Affinity, p.Routing == provider.Rotate
 	leadScope := scope // where the lead of a subagent is kept
 	if isGroup {
 		// a routing group: every member's keys or accounts weighed together
 		cands, pl = s.planGroup(g, ms, from)
 		group = groupRef(g, ms)
-		scope, mode, rotate = provider.GroupPrefix+g.ID, g.Affinity, g.Routing == provider.Rotate
+		scope, mode, rotate = scoped(r.Context(), provider.GroupPrefix+g.ID), g.Affinity, g.Routing == provider.Rotate
 		leadScope = scope
 		if words != "" {
 			// a subagent a rule sends elsewhere mustn't take its agent's

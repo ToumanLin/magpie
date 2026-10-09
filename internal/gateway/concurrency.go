@@ -225,6 +225,9 @@ type Lane struct {
 // so it answers as quotas does: this machine, or one with the key of the
 // gateway shared on the local network.
 func (s *Server) concurrency(w http.ResponseWriter, r *http.Request) {
+	if memberOnly(w, r) {
+		return
+	}
 	if !local(r) && !sharedWith(r) {
 		writeError(w, provider.Chat, http.StatusForbidden, "magpie's concurrency is told to another machine only when magpie is shared on the local network and the request carries its API key")
 		return

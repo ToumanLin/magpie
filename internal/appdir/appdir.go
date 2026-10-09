@@ -42,6 +42,8 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+
+	"github.com/yetone/magpie/internal/mode"
 )
 
 const (
@@ -86,6 +88,18 @@ func UseExecutable(exe string) {
 	}
 }
 
+// dataName is the portable data folder's name: Mag's and Pie's have their
+// own beside one another, data-mag and data-pie.
+func dataName() string {
+	switch mode.Current() {
+	case mode.Client:
+		return DataName + "-mag"
+	case mode.Server:
+		return DataName + "-pie"
+	}
+	return DataName
+}
+
 // Resolve is the data folder of a magpie run from exe, or "" when it isn't
 // portable.
 func Resolve(exe string) string {
@@ -93,7 +107,7 @@ func Resolve(exe string) string {
 		exe = real
 	}
 	base := Beside(exe)
-	data := filepath.Join(base, DataName)
+	data := filepath.Join(base, dataName())
 	if fi, err := os.Stat(filepath.Join(base, MarkerName)); err == nil && !fi.IsDir() {
 		return absolute(data)
 	}
@@ -112,7 +126,7 @@ func Passed(exe string) string {
 		exe = real
 	}
 	base := Beside(exe)
-	data := filepath.Join(base, DataName)
+	data := filepath.Join(base, dataName())
 	if fi, err := os.Stat(data); err == nil && fi.IsDir() && hasFiles(data) && Resolve(exe) == "" {
 		return absolute(data)
 	}
@@ -176,13 +190,13 @@ var sharedFolder = func(dir string) bool {
 // with no home folder.
 func installed() string {
 	if x := os.Getenv("XDG_CONFIG_HOME"); rooted(x) {
-		return filepath.Join(x, "magpie")
+		return filepath.Join(x, mode.Folder())
 	}
 	h, err := Home()
 	if err != nil {
 		return ""
 	}
-	return filepath.Join(h, ".config", "magpie")
+	return filepath.Join(h, ".config", mode.Folder())
 }
 
 // Beside is the folder a portable magpie run from exe keeps its data folder
@@ -228,9 +242,9 @@ func Config() string {
 		return p
 	}
 	if x := os.Getenv("XDG_CONFIG_HOME"); rooted(x) {
-		return filepath.Join(x, "magpie")
+		return filepath.Join(x, mode.Folder())
 	}
-	return filepath.Join(mustHome(), ".config", "magpie")
+	return filepath.Join(mustHome(), ".config", mode.Folder())
 }
 
 // Redirected is the folder magpie keeps its files in when it is opened
@@ -247,7 +261,7 @@ func Redirected() string {
 	if err != nil {
 		return ""
 	}
-	if def := filepath.Join(h, ".config", "magpie"); filepath.Clean(def) != filepath.Clean(Config()) {
+	if def := filepath.Join(h, ".config", mode.Folder()); filepath.Clean(def) != filepath.Clean(Config()) {
 		return def
 	}
 	return ""
@@ -260,9 +274,9 @@ func Cache() string {
 		return filepath.Join(p, "cache")
 	}
 	if x := os.Getenv("XDG_CACHE_HOME"); rooted(x) {
-		return filepath.Join(x, "magpie")
+		return filepath.Join(x, mode.Folder())
 	}
-	return filepath.Join(mustHome(), ".cache", "magpie")
+	return filepath.Join(mustHome(), ".cache", mode.Folder())
 }
 
 // WebView is the folder the Windows webview (WebView2) keeps its profile
@@ -288,5 +302,5 @@ func SystemCache() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(d, "magpie"), nil
+	return filepath.Join(d, mode.Folder()), nil
 }

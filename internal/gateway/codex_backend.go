@@ -66,6 +66,14 @@ func (s *Server) codexBackend(w http.ResponseWriter, r *http.Request) {
 	// newer: the backend serves a model only to a client that knows it
 	provider.SawCodexClient(r.Header)
 	rest := strings.TrimPrefix(r.URL.Path, CodexPath)
+	// a member's device asks the hub for turns alone, which go through
+	// routing and the member's models (codexAccounts): Codex's own model
+	// list, which names every model the hub has, and whatever else Codex
+	// asks its backend are not a member's to ask the hub
+	if access.Caller(r.Context()).Member != "" && !(r.Method == http.MethodPost && rest == "/responses") {
+		writeError(w, provider.Responses, http.StatusForbidden, "a member's device reaches the hub's models at /v1/responses, /v1/chat/completions and /v1/messages, and lists them at /v1/models")
+		return
+	}
 	body, ok := s.readRequestBody(w, r, provider.Responses, 0)
 	if !ok {
 		return
